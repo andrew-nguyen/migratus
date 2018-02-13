@@ -65,7 +65,9 @@
 
 (defn migrate
   "Bring up any migrations that are not completed."
-  [config]
+  [config & [system]]
+  (when system
+    (log/debug "Starting a component/system"))
   (run (proto/make-store config) nil (partial migrate* config)))
 
 (defn- run-up [config store ids]
@@ -118,9 +120,21 @@
 (defn reset
   "Reset the database by down-ing all migrations successfully
   applied, then up-ing all migratinos."
-  [config]
-  (run (proto/make-store config) nil (partial reset* config))
-  (migrate config))
+  [config & [{:keys [system-up-fn system-down-fn] :as system}]]
+
+  (try
+    (when system-up-fn
+      (log/info "Starting a component/system")
+      (system-up-fn))
+    (run (proto/make-store config) nil (partial reset* config))
+    (migrate config)
+    (when system-down-fn
+      (log/info "Stopping component/system")
+      (system-down-fn))
+
+    (catch Exception e
+      (log/error "Error starting up system or executing migration...")
+      (.printStackTrace e))))
 
 (defn init
   "Initialize the data store"
