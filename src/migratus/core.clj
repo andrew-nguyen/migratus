@@ -18,16 +18,25 @@
             [migratus.protocols :as proto]
             migratus.database))
 
-(defn run [store ids command]
+(defn run [store ids command & [{:keys [system-up-fn system-down-fn] :as system}]]
   (try
+    (when system-up-fn
+      (log/info "Starting a component/system")
+      (system-up-fn))
     (log/info "Starting migrations")
     (proto/connect store)
     (command store ids)
     (catch java.sql.BatchUpdateException e
       (throw (or (.getNextException e) e)))
+    (catch Exception e
+      (log/error "Error starting up system or executing migrations")
+      (throw (or (.getNextException e) e)))
     (finally
       (log/info "Ending migrations")
-      (proto/disconnect store))))
+      (proto/disconnect store)
+      (when system-down-fn
+        (log/info "Stopping component/system")
+        (system-down-fn)))))
 
 (defn require-plugin [{:keys [store]}]
   (if-not store
@@ -65,10 +74,8 @@
 
 (defn migrate
   "Bring up any migrations that are not completed."
-  [config & [system]]
-  (when system
-    (log/debug "Starting a component/system"))
-  (run (proto/make-store config) nil (partial migrate* config)))
+  [config]
+  (run (proto/make-store config) nil (partial migrate* config) (:system config)))
 
 (defn- run-up [config store ids]
   (let [completed  (set (proto/completed-ids store))
@@ -80,7 +87,7 @@
   "Bring up the migrations identified by ids.
   Any migrations that are already complete will be skipped."
   [config & ids]
-  (run (proto/make-store config) ids (partial run-up config)))
+  (run (proto/make-store config) ids (partial run-up config)  (:system config)))
 
 (defn- run-down [config store ids]
   (let [completed  (set (proto/completed-ids store))
@@ -98,7 +105,7 @@
   "Bring down the migrations identified by ids.
   Any migrations that are not completed will be skipped."
   [config & ids]
-  (run (proto/make-store config) ids (partial run-down config)))
+  (run (proto/make-store config) ids (partial run-down config) (:system config)))
 
 (defn- rollback* [config store _]
   (run-down
@@ -115,26 +122,14 @@
 (defn rollback
   "Rollback the last migration that was successfully applied."
   [config]
-  (run (proto/make-store config) nil (partial rollback* config)))
+  (run (proto/make-store config) nil (partial rollback* config) (:system config)))
 
 (defn reset
   "Reset the database by down-ing all migrations successfully
   applied, then up-ing all migratinos."
-  [config & [{:keys [system-up-fn system-down-fn] :as system}]]
-
-  (try
-    (when system-up-fn
-      (log/info "Starting a component/system")
-      (system-up-fn))
-    (run (proto/make-store config) nil (partial reset* config))
-    (migrate config)
-    (when system-down-fn
-      (log/info "Stopping component/system")
-      (system-down-fn))
-
-    (catch Exception e
-      (log/error "Error starting up system or executing migration...")
-      (.printStackTrace e))))
+  [config]
+  (run (proto/make-store config) nil (partial reset* config) (:system config))
+  (migrate config))
 
 (defn init
   "Initialize the data store"
