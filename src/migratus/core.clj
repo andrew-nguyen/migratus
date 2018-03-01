@@ -30,7 +30,7 @@
       (throw (or (.getNextException e) e)))
     (catch Exception e
       (log/error "Error starting up system or executing migrations")
-      (throw (or (.getNextException e) e)))
+      (throw e))
     (finally
       (log/info "Ending migrations")
       (proto/disconnect store)
